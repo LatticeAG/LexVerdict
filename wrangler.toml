@@ -1,0 +1,12 @@
+name = "lexverdict"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[vars]
+UPSTREAM_URL = "https://api.openai.com"
+UPSTREAM_API_KEY = ""
+JIMMY_URL = "https://your-verifier.workers.dev/v1/chat/completions"
+
+[[services]]
+binding = "JIMMY_SERVICE"
+service = "jimcf"
