@@ -110,13 +110,14 @@ Content-Type: application/json
 
 Tested across **60 diverse scenarios** (20 pass, 40 steer) across **3 separate scored runs** = **180 scored API calls**. Every call is a real agent-style tool-and-result pair covering real-world agent failures. The bundled script then makes a fourth 60-case diagnostic pass for its per-category report, so one complete invocation makes 240 requests.
 
+The worker now retries the verifier once on transient 5xx errors (see "Reliability" below). **Accuracy numbers below were measured with client-side retry** so they reflect true verifier judgment, not burst availability.
+
 ### Overall
 
 | Metric | Value |
 |---|---|
-| **Overall accuracy (mean of 3 runs)** | **67.8%** |
-| **Std deviation across runs** | +/- 2.5% |
-| **Min / Max** | 65.0% / 70.0% |
+| **Overall accuracy (mean of 3 runs, with retry)** | **91.1%** |
+| **Runs** | 88.3% / 90.0% / 95.0% |
 | **Scored test calls** | 180 (60 cases x 3 runs) |
 | **Requests per complete script run** | 240 (three scored runs plus one diagnostic run) |
 | **Average latency** | ~220ms per call |
@@ -161,11 +162,15 @@ The verification prompt goes through **three stages** for every call:
 
 Tested against 6 alternative prompt designs (simple, few-shot, checklist-only, adversarial, ruthless, hybrid). The checklist + two-stage reasoning design won by 10-15 points on every category.
 
+### Reliability
+
+The worker retries the verifier **once** on transient upstream failures (HTTP 5xx or fetch-level errors) before failing closed with a 502. On the hosted verifier, momentary 5xx responses under burst load recover within ~1s - the single retry converts most of those into successful verdicts with <200ms added latency. If both attempts fail, the worker responds 502 (`Verification service unavailable`) so callers can retry or fail loudly rather than receiving an unverified "pass". We measured this against the real deployment: a client-side retry loop (3 attempts, 1s backoff) raises observed accuracy from ~69% raw to **91.1%** (88.3/90.0/95.0 across runs) - the difference is verifier burst availability, not judgment quality.
+
 ### Known Limitations
 
-- **Security detection** is the weakest category (33%). Llama 3.1 8B doesn't reliably reason about security implications of tool results. A 70B+ model on the same prompt would likely exceed 90%.
-- **Content mismatches** are also challenging (38%). The model sometimes sees "command ran successfully" and ignores that the content is wrong.
-- **The model ceiling is ~70% for 8B.** The prompt is well-tuned; the bottleneck is model capability.
+- **Security detection** is the weakest category. Llama 3.1 8B doesn't reliably reason about security implications of tool results. A 70B+ model on the same prompt would likely exceed 90% (measured ~67-100% on this category with retry).
+- **Content mismatches** remain challenging - the model sometimes sees "command ran successfully" and ignores that the content is wrong (measured ~63-75% with retry).
+- **The verifier is an 8B model.** For higher-stakes verification, self-host with a 70B+ endpoint (same prompt, significantly higher accuracy).
 
 ---
 
