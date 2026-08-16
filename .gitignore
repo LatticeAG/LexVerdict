@@ -1,5 +1,13 @@
 node_modules/
 .wrangler/
-.dev.vars
+.dev.vars*
 dist/
 *.log
+*SPEC*.md
+*BUILD-SPEC*.md
+*HANDOFF*.md
+*ROADMAP*.md
+*REVIEW*.md
+*WHAT-NEXT*.md
+AGENTS.md
+test/AGENTS.mdAGENT.md

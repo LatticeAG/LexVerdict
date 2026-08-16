@@ -17,7 +17,7 @@
 
 ## Overview
 
-> **A verification API for agent results. POST a tool call, goal, and result - get back pass or steer with a reason. No proxy, no SDK, no code changes to your agent.**
+> **A verification API for agent results. POST a tool call, goal, and result - get back pass or steer with a reason. No SDK or code changes to your agent.**
 
 Every agentic workflow has the same blind spot: tool calls that succeed technically but produce wrong results. The agent writes a config with the wrong environment, queries an API and gets unexpected data, or runs a script that exits 0 but outputs garbage. Pre-execution checks can't catch these because the call itself is valid.
 
@@ -98,34 +98,17 @@ Content-Type: application/json
 
 ### Batch Verification
 
-```
-POST /v1/verify/batch
-Content-Type: application/json
+`POST /v1/verify/batch` is not supported in v1. Use one `POST /v1/verify` call per observed result so each verdict remains independently actionable. Batch behavior is deferred until its limits and partial-failure semantics are defined.
 
-{
-  "checks": [
-    { "tool_call": "...", "goal": "...", "result": "..." },
-    { "tool_call": "...", "goal": "...", "result": "..." }
-  ]
-}
-```
+### Health
 
-**Response:**
-
-```json
-{
-  "verdicts": [
-    { "verdict": "steer", "confidence": 0.92, "message": "..." },
-    { "verdict": "pass", "confidence": 0.87, "message": null }
-  ]
-}
-```
+`GET /health` returns Worker liveness and verifier configuration without calling a provider. Its `status` is `ok` when a Jimmy service binding or fallback URL is configured, and `degraded` otherwise.
 
 ---
 
 ## Accuracy
 
-Tested across **60 diverse scenarios** (20 pass, 40 steer) across **3 separate runs** = **180 total API calls**. Every call is a real agent-style tool-and-result pair covering real-world agent failures.
+Tested across **60 diverse scenarios** (20 pass, 40 steer) across **3 separate scored runs** = **180 scored API calls**. Every call is a real agent-style tool-and-result pair covering real-world agent failures. The bundled script then makes a fourth 60-case diagnostic pass for its per-category report, so one complete invocation makes 240 requests.
 
 ### Overall
 
@@ -134,7 +117,8 @@ Tested across **60 diverse scenarios** (20 pass, 40 steer) across **3 separate r
 | **Overall accuracy (mean of 3 runs)** | **67.8%** |
 | **Std deviation across runs** | +/- 2.5% |
 | **Min / Max** | 65.0% / 70.0% |
-| **Total test calls** | 180 (60 cases x 3 runs) |
+| **Scored test calls** | 180 (60 cases x 3 runs) |
+| **Requests per complete script run** | 240 (three scored runs plus one diagnostic run) |
 | **Average latency** | ~220ms per call |
 
 ### Per-Category (60 cases, detailed breakdown)
@@ -203,6 +187,7 @@ Client -> LexVerdict Worker -> Jimmy (15k TPS verifier)
 The Worker:
 - Exposes `POST /v1/verify` (standalone verification)
 - Exposes `POST /v1/chat/completions` (proxy mode - verifies upstream responses)
+- Exposes `GET /health` for liveness and verifier configuration status
 - Uses a **two-stage reasoning prompt**: restate the goal/result, check systematically, then decide
 - Supports both streaming and non-streaming upstream responses
 
@@ -217,13 +202,17 @@ src/
 
 ### Configuration
 
-Set via `wrangler.toml` vars or `wrangler secret`:
+`wrangler.toml` provides explicit `dev`, `staging`, and `production` environments. Configure providers through a service binding or a fallback URL, and keep credentials in Wrangler secrets:
 
 | Variable | Required | Description |
 |---|---|---|
-| `JIMMY_URL` | Yes | Your fast model endpoint for verification |
-| `UPSTREAM_URL` | No | Upstream model API for proxy mode |
-| `UPSTREAM_API_KEY` | No | API key for upstream (passes through client key if empty) |
+| `JIMMY_SERVICE` | One of this or `JIMMY_URL` | Optional Cloudflare service binding for the verifier. It takes precedence over `JIMMY_URL`. |
+| `JIMMY_URL` | One of this or `JIMMY_SERVICE` | HTTPS OpenAI-compatible verifier endpoint. |
+| `UPSTREAM_URL` | Proxy mode | HTTPS OpenAI-compatible upstream base URL or completions endpoint. |
+| `UPSTREAM_API_KEY` | No | Optional upstream credential. Set it with `wrangler secret put`; client authorization is forwarded when absent. |
+| `REQUEST_LOGGING_ENABLED` | No | Set to `false` to disable metadata-only request logging. |
+
+The sample service names in `wrangler.toml` must match your verifier Workers. If you use `JIMMY_URL` instead, remove the corresponding `JIMMY_SERVICE` binding so the fallback can be selected.
 
 ---
 
@@ -275,10 +264,12 @@ curl -X POST https://your-lexverdict.workers.dev/v1/verify \
 git clone https://github.com/LatticeAG/LexVerdict.git
 cd LexVerdict
 npm install
-npx wrangler deploy
+npm run dev
+npm run deploy:staging
+npm run deploy:production
 ```
 
-Set `JIMMY_URL` to your own verification model endpoint.
+Set any required upstream credential with `npx wrangler secret put UPSTREAM_API_KEY --env <environment>`. Configure either a `JIMMY_SERVICE` binding or a HTTPS `JIMMY_URL` for every deployed environment.
 
 ---
 

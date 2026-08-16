@@ -1,12 +1,65 @@
+"$schema" = "./node_modules/wrangler/config-schema.json"
 name = "lexverdict"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
+workers_dev = true
 
+# The unqualified configuration is production-compatible so existing
+# `wrangler deploy` workflows remain valid. Named environments below make
+# environment selection explicit with `--env dev|staging|production`.
 [vars]
+ENVIRONMENT = "production"
 UPSTREAM_URL = "https://api.openai.com"
-UPSTREAM_API_KEY = ""
-JIMMY_URL = "https://your-verifier.workers.dev/v1/chat/completions"
+REQUEST_LOGGING_ENABLED = "true"
 
 [[services]]
+binding = "JIMMY_SERVICE"
+service = "jimcf"
+
+# These bindings assume the verifier Worker is deployed as jimcf, jimcf-dev,
+# and jimcf-staging. Replace them with your own Worker names, or remove the
+# binding and configure the JIMMY_URL fallback for that environment instead.
+# Never store provider credentials in this file. UPSTREAM_API_KEY is optional
+# and must be configured as a secret for every deployment that needs it, e.g.:
+#   npx wrangler secret put UPSTREAM_API_KEY --env dev
+#   npx wrangler secret put UPSTREAM_API_KEY --env staging
+#   npx wrangler secret put UPSTREAM_API_KEY --env production
+
+[env.dev]
+workers_dev = true
+
+[env.dev.vars]
+ENVIRONMENT = "development"
+UPSTREAM_URL = "https://api.openai.com"
+REQUEST_LOGGING_ENABLED = "true"
+
+[[env.dev.services]]
+binding = "JIMMY_SERVICE"
+service = "jimcf-dev"
+
+[env.staging]
+workers_dev = true
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+UPSTREAM_URL = "https://api.openai.com"
+REQUEST_LOGGING_ENABLED = "true"
+
+[[env.staging.services]]
+binding = "JIMMY_SERVICE"
+service = "jimcf-staging"
+
+# Keep the canonical production Worker name when deployment explicitly selects
+# the production environment. Wrangler otherwise appends the environment name.
+[env.production]
+name = "lexverdict"
+workers_dev = true
+
+[env.production.vars]
+ENVIRONMENT = "production"
+UPSTREAM_URL = "https://api.openai.com"
+REQUEST_LOGGING_ENABLED = "true"
+
+[[env.production.services]]
 binding = "JIMMY_SERVICE"
 service = "jimcf"
