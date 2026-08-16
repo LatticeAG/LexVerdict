@@ -317,4 +317,33 @@ describe("verifier calls", () => {
     await expect(verifyToolResult(env, toolRequest)).rejects.toThrow();
     await expect(verifyToolResult(env, toolRequest)).rejects.toThrow();
   });
+
+  it("retries once when the verifier returns a transient 5xx, then succeeds", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("temporarily unavailable", { status: 503 }))
+      .mockResolvedValueOnce(
+        jimmyResponse("VERDICT: PASS\nCONFIDENCE: 1.0\nMESSAGE: null"),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(verifyToolResult(env, toolRequest)).resolves.toEqual({
+      verdict: "pass",
+      confidence: 1,
+      message: null,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed after retry when the verifier stays down (5xx twice)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response("temporarily unavailable", { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(verifyToolResult(env, toolRequest)).rejects.toThrow(
+      "Jimmy verification failed (503)",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

@@ -490,27 +490,45 @@ async function fetchJimmy(
     signal,
   };
 
-  if (env.JIMMY_SERVICE) {
-    return env.JIMMY_SERVICE.fetch("https://jimcf/v1/chat/completions", init);
-  }
+  const attempt = async (): Promise<Response> => {
+    if (env.JIMMY_SERVICE) {
+      return env.JIMMY_SERVICE.fetch("https://jimcf/v1/chat/completions", init);
+    }
 
-  const jimmyUrl = env.JIMMY_URL?.trim();
-  if (!jimmyUrl) {
-    throw new VerifierConfigurationError("JIMMY_URL is not configured");
-  }
+    const jimmyUrl = env.JIMMY_URL?.trim();
+    if (!jimmyUrl) {
+      throw new VerifierConfigurationError("JIMMY_URL is not configured");
+    }
 
-  let url: URL;
+    let url: URL;
+    try {
+      url = new URL(jimmyUrl);
+    } catch {
+      throw new VerifierConfigurationError("JIMMY_URL must be an absolute URL");
+    }
+
+    if (url.protocol !== "https:") {
+      throw new VerifierConfigurationError("JIMMY_URL must use HTTPS");
+    }
+
+    return fetch(url.toString(), init);
+  };
+
+  // One retry on transient upstream failures (5xx / network error). The
+  // verifier endpoint recovers fast under load - a single retry turns
+  // burst-time 502s into successful verdicts without doubling latency.
   try {
-    url = new URL(jimmyUrl);
+    const response = await attempt();
+    if (response.ok || response.status < 500) {
+      return response;
+    }
+    discardResponseBody(response.body);
   } catch {
-    throw new VerifierConfigurationError("JIMMY_URL must be an absolute URL");
+    // fall through to retry for fetch-level failures; config errors are
+    // rethrown by the retry attempt below (they fail identically)
   }
 
-  if (url.protocol !== "https:") {
-    throw new VerifierConfigurationError("JIMMY_URL must use HTTPS");
-  }
-
-  return fetch(url.toString(), init);
+  return attempt();
 }
 
 async function callJimmy(env: Env, prompt: string): Promise<string> {
