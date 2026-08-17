@@ -515,8 +515,9 @@ async function fetchJimmy(
   };
 
   // One retry on transient upstream failures (5xx / network error). The
-  // verifier endpoint recovers fast under load - a single retry turns
-  // burst-time 502s into successful verdicts without doubling latency.
+  // verifier endpoint recovers fast under load but needs a beat - a short
+  // backoff before the retry absorbs burst-time 502s that an immediate
+  // retry would re-hit. Latency stays bounded (~0.5s worst case).
   try {
     const response = await attempt();
     if (response.ok || response.status < 500) {
@@ -527,6 +528,8 @@ async function fetchJimmy(
     // fall through to retry for fetch-level failures; config errors are
     // rethrown by the retry attempt below (they fail identically)
   }
+
+  await new Promise((resolve) => setTimeout(resolve, 500));
 
   return attempt();
 }
