@@ -514,13 +514,14 @@ async function fetchJimmy(
     return fetch(url.toString(), init);
   };
 
-  // One retry on transient upstream failures (5xx / network error). The
-  // verifier endpoint recovers fast under load but needs a beat - a short
-  // backoff before the retry absorbs burst-time 502s that an immediate
-  // retry would re-hit. Latency stays bounded (~0.5s worst case).
+  // One retry on transient upstream failures (5xx, 429 rate-limit, or
+  // network error). The verifier endpoint recovers fast under load but
+  // needs a beat - a short backoff before the retry absorbs burst-time
+  // 502s/429s that an immediate retry would re-hit. Latency stays
+  // bounded (~0.5s worst case).
   try {
     const response = await attempt();
-    if (response.ok || response.status < 500) {
+    if (response.ok || (response.status < 500 && response.status !== 429)) {
       return response;
     }
     discardResponseBody(response.body);
@@ -529,7 +530,7 @@ async function fetchJimmy(
     // rethrown by the retry attempt below (they fail identically)
   }
 
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
 
   return attempt();
 }
@@ -602,18 +603,39 @@ async function callJimmy(env: Env, prompt: string): Promise<string> {
   }
 }
 
+async function verifyWithParseRetry(
+  env: Env,
+  buildPrompt: () => string,
+): Promise<VerdictResult> {
+  // Under burst the verifier occasionally returns truncated/malformed
+  // verdict output (HTTP 200, unparseable body). That failure shows up in
+  // parseVerdict, not in fetchJimmy's HTTP-level retry - so retry once on
+  // VerifierOutputError as well. A fresh prompt+call gives the verifier a
+  // clean pass at producing structured output.
+  try {
+    return parseVerdict(await callJimmy(env, buildPrompt()));
+  } catch (error) {
+    if (!(error instanceof VerifierOutputError)) {
+      throw error;
+    }
+  }
+
+  console.warn("lexverdict.outputRetry", JSON.stringify({ reason: "invalid-verdict-output" }));
+  return parseVerdict(await callJimmy(env, buildPrompt()));
+}
+
 export async function verifyChatResponse(
   env: Env,
   requestMessages: VerificationMessage[],
   responseContent: string,
 ): Promise<VerdictResult> {
   assertChatVerificationInput(requestMessages, responseContent);
-  const prompt = buildChatVerificationPrompt(requestMessages, responseContent);
-  return parseVerdict(await callJimmy(env, prompt));
+  return verifyWithParseRetry(env, () =>
+    buildChatVerificationPrompt(requestMessages, responseContent),
+  );
 }
 
 export async function verifyToolResult(env: Env, req: VerifyRequest): Promise<VerdictResult> {
   assertVerifyRequest(req);
-  const prompt = buildToolVerificationPrompt(req);
-  return parseVerdict(await callJimmy(env, prompt));
+  return verifyWithParseRetry(env, () => buildToolVerificationPrompt(req));
 }

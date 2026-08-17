@@ -335,6 +335,40 @@ describe("verifier calls", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("retries once on 429 rate-limit from the verifier, then succeeds", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("rate limited", { status: 429 }))
+      .mockResolvedValueOnce(
+        jimmyResponse("VERDICT: PASS\nCONFIDENCE: 1.0\nMESSAGE: null"),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(verifyToolResult(env, toolRequest)).resolves.toEqual({
+      verdict: "pass",
+      confidence: 1,
+      message: null,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries once when the verifier returns malformed verdict output, then succeeds", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jimmyResponse("The deployment appears correct, but no structured verdict was returned."),
+      )
+      .mockResolvedValueOnce(jimmyResponse("VERDICT: PASS\nCONFIDENCE: 1.0\nMESSAGE: null"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(verifyToolResult(env, toolRequest)).resolves.toEqual({
+      verdict: "pass",
+      confidence: 1,
+      message: null,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("fails closed after retry when the verifier stays down (5xx twice)", async () => {
     const fetchMock = vi
       .fn()
