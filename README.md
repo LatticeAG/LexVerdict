@@ -10,8 +10,20 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg?logo=opensourceinitiative&logoColor=white)](./LICENSE)
 [![Open Source](https://img.shields.io/badge/Open-Source-black.svg?logo=github&logoColor=white)](https://github.com/LatticeAG/LexVerdict)
 [![Invite Only](https://img.shields.io/badge/API-Invite%20Only-blueviolet)](https://latticeag.vercel.app/products/lexverdict)
+[![GitHub stars](https://img.shields.io/github/stars/LatticeAG/LexVerdict?style=for-the-badge)](https://github.com/LatticeAG/LexVerdict/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/LatticeAG/LexVerdict?style=for-the-badge)](https://github.com/LatticeAG/LexVerdict/issues)
 
 </div>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#why-lexverdict">Why LexVerdict</a> ·
+  <a href="#how-it-works">How It Works</a> ·
+  <a href="#accuracy">Accuracy</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#known-issues--limitations">Known Issues</a>
+</p>
 
 ---
 
@@ -33,7 +45,7 @@ POST /v1/verify
 
 ---
 
-## Why
+## Why LexVerdict
 
 **The most common agent failure isn't a bad tool call - it's a correct call with a bad result.**
 
@@ -49,11 +61,62 @@ Existing approaches:
 
 LexVerdict fills the gap: real-time result validation you call like an API.
 
+### How LexVerdict is different
+
+- **Post-execution, not pre-execution** - validates what the tool *returned*, not whether the call was allowed. The complement to policy firewalls, not a competitor.
+- **One HTTP call, zero integration tax** - no SDK, no agent code changes, no framework lock-in. Any loop that can POST JSON can verify.
+- **Fail-closed by design** - verifier down, malformed output, or unconfigured provider all return 502 (`Verification service unavailable`), never a silent "pass".
+- **Proxy mode** - `POST /v1/chat/completions` verifies upstream model responses inline, with steer injection for streaming and non-streaming traffic.
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/LatticeAG/LexVerdict.git
+cd LexVerdict
+npm install
+npm run dev
+npm run deploy:staging
+npm run deploy:production
+```
+
+Set any required upstream credential with `npx wrangler secret put UPSTREAM_API_KEY --env <environment>`. Configure either a `JIMMY_SERVICE` binding or a HTTPS `JIMMY_URL` for every deployed environment.
+
+Verify it works:
+
+```bash
+curl -X POST https://your-lexverdict.workers.dev/v1/verify \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool_call": "write_file deploy-config.yml",
+    "goal": "Configure staging deployment",
+    "result": "config written with env: staging"
+  }'
+# -> { "verdict": "pass", "confidence": ..., "message": ... }
+
+curl https://your-lexverdict.workers.dev/health
+# -> { "status": "ok" | "degraded", ... } (degraded when no verifier provider is configured)
+```
+
 ---
 
 ## How It Works
 
+```mermaid
+flowchart TD
+  Agent["Agent loop"] -->|tool result| LV["LexVerdict Worker"]
+  LV --> V["POST /v1/verify"]
+  LV --> P["POST /v1/chat/completions (proxy mode)"]
+  LV --> H["GET /health"]
+  V --> Prompt["Two-stage prompt:\nrestate → 6 systematic checks → verdict"]
+  Prompt --> Jimmy["Jimmy verifier (15k TPS)"]
+  Jimmy -->|pass| OK["pass → continue"]
+  Jimmy -->|steer| ST["steer → inject message"]
+  Jimmy -->|5xx / malformed| Retry["retry once → 502 fail-closed"]
+  P --> Upstream["Upstream model + steer injection"]
 ```
+
 1. Agent makes a tool call (write_file, API, shell, etc.)
 2. Tool executes and returns a result
 3. You POST to LexVerdict: { tool_call, goal, result }
@@ -67,7 +130,6 @@ LexVerdict fills the gap: real-time result validation you call like an API.
 5. LexVerdict returns verdict:
    - "pass" -> result looks correct, continue normally
    - "steer" -> result is off-course, inject this message
-```
 
 ---
 
@@ -134,7 +196,7 @@ The worker now retries the verifier once on transient 5xx errors (see "Reliabili
 | **Drift** | 50.0% | 3/6 | Deleted active sessions, wrong algorithm, restored wrong backup |
 | **Edge cases** | 50.0% | 3/6 | Version mismatch, missing files, cron not configured, empty test output |
 
-### Per-Run Results
+### Per-Run Results (raw single pass, no client retry)
 
 | Run | Correct | Total | Accuracy |
 |---|---|---|---|
@@ -142,9 +204,18 @@ The worker now retries the verifier once on transient 5xx errors (see "Reliabili
 | 2 | 39 | 60 | 65.0% |
 | 3 | 42 | 60 | 70.0% |
 
+Raw single-pass accuracy averages ~69%; the client-side retry loop in "Reliability" recovers burst-availability failures to reach the 91.1% overall figure above.
+
 ### Test Suite
 
-The full test suite lives in `test/accuracy_test.py`. Run it yourself:
+Unit suite (mocked verifier, no network):
+
+```bash
+npm test      # vitest run — 54 tests across 4 files
+npm run check # tsc --noEmit + vitest run
+```
+
+Accuracy suite (hits a live endpoint):
 
 ```bash
 python3 test/accuracy_test.py
@@ -166,11 +237,28 @@ Tested against 6 alternative prompt designs (simple, few-shot, checklist-only, a
 
 The worker retries the verifier **once** on transient upstream failures (HTTP 5xx or fetch-level errors) before failing closed with a 502. On the hosted verifier, momentary 5xx responses under burst load recover within ~1s - the single retry converts most of those into successful verdicts with <200ms added latency. If both attempts fail, the worker responds 502 (`Verification service unavailable`) so callers can retry or fail loudly rather than receiving an unverified "pass". We measured this against the real deployment: a client-side retry loop (3 attempts, 1s backoff) raises observed accuracy from ~69% raw to **91.1%** (88.3/90.0/95.0 across runs) - the difference is verifier burst availability, not judgment quality.
 
-### Known Limitations
+---
 
-- **Security detection** is the weakest category. Llama 3.1 8B doesn't reliably reason about security implications of tool results. A 70B+ model on the same prompt would likely exceed 90% (measured ~67-100% on this category with retry).
-- **Content mismatches** remain challenging - the model sometimes sees "command ran successfully" and ignores that the content is wrong (measured ~63-75% with retry).
-- **The verifier is an 8B model.** For higher-stakes verification, self-host with a 70B+ endpoint (same prompt, significantly higher accuracy).
+## Features
+
+### Verification Core
+
+| Feature | Description |
+|---------|------------|
+| **Single-call verdicts** | `POST /v1/verify` returns `pass`/`steer` with confidence and an injectable message. |
+| **Proxy mode** | `POST /v1/chat/completions` verifies upstream responses inline, streaming and non-streaming. |
+| **Six-check prompt** | Match, environment, data, security, failure, drift - every verdict runs the same systematic checks. |
+| **Retry-then-fail-closed** | One retry on transient 5xx/fetch errors; 502 afterwards. Never a silent pass. |
+| **Config-status health** | `GET /health` reports `ok`/`degraded` without touching a provider. |
+
+### Operations
+
+| Feature | Description |
+|---------|------------|
+| **Three environments** | Explicit `dev`, `staging`, `production` targets in `wrangler.toml`. |
+| **Two provider paths** | `JIMMY_SERVICE` binding (preferred) or `JIMMY_URL` HTTPS fallback. |
+| **Secret-safe config** | Credentials only via `wrangler secret put`; never in the repo. |
+| **Request logging toggle** | Metadata-only logging, disable with `REQUEST_LOGGING_ENABLED=false`. |
 
 ---
 
@@ -196,13 +284,21 @@ The Worker:
 - Uses a **two-stage reasoning prompt**: restate the goal/result, check systematically, then decide
 - Supports both streaming and non-streaming upstream responses
 
-### File Structure
+### File Tree
 
-```
-src/
-├── index.ts      # Worker entry point, routing, CORS
-├── proxy.ts      # Upstream proxy + response buffering + steer injection
-└── verify.ts     # Jimmy call, prompt construction, verdict parsing
+```text
+lexverdict/
+├── src/
+│   ├── index.ts      # Worker entry point, routing, CORS (~360 lines)
+│   ├── proxy.ts      # Upstream proxy + response buffering + steer injection (~590 lines)
+│   └── verify.ts     # Jimmy call, prompt construction, verdict parsing (~640 lines)
+├── test/
+│   ├── accuracy_test.py  # 60-case live accuracy suite (3 scored runs)
+│   └── prompt_final.py   # Winning prompt design + variants
+├── wrangler.toml     # dev / staging / production environments
+├── package.json      # dev, deploy:*, typecheck, test, check scripts
+├── LICENSE           # MIT
+└── README.md         # This file
 ```
 
 ### Configuration
@@ -263,21 +359,6 @@ curl -X POST https://your-lexverdict.workers.dev/v1/verify \
 
 ---
 
-## Deploy Your Own
-
-```bash
-git clone https://github.com/LatticeAG/LexVerdict.git
-cd LexVerdict
-npm install
-npm run dev
-npm run deploy:staging
-npm run deploy:production
-```
-
-Set any required upstream credential with `npx wrangler secret put UPSTREAM_API_KEY --env <environment>`. Configure either a `JIMMY_SERVICE` binding or a HTTPS `JIMMY_URL` for every deployed environment.
-
----
-
 ## Roadmap
 
 - [x] API design & spec
@@ -286,6 +367,15 @@ Set any required upstream credential with `npx wrangler secret put UPSTREAM_API_
 - [ ] Dashboard (verdict analytics, failure patterns)
 - [ ] Custom rules engine (overrides for known patterns)
 - [ ] Proxy steering mode (fully featured)
+
+---
+
+## Known Issues & Limitations
+
+- **Security detection** is the weakest category. Llama 3.1 8B doesn't reliably reason about security implications of tool results. A 70B+ model on the same prompt would likely exceed 90% (measured ~67-100% on this category with retry).
+- **Content mismatches** remain challenging - the model sometimes sees "command ran successfully" and ignores that the content is wrong (measured ~63-75% with retry).
+- **The verifier is an 8B model.** For higher-stakes verification, self-host with a 70B+ endpoint (same prompt, significantly higher accuracy).
+- **No batch endpoint in v1** - one `POST /v1/verify` per observed result. Batch is deferred until limits and partial-failure semantics are defined.
 
 ---
 
