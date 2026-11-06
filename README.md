@@ -81,7 +81,7 @@ npm run deploy:staging
 npm run deploy:production
 ```
 
-Local verification requires a running Jimmy verifier. The dev configuration binds `JIMMY_SERVICE` to `jimcf-dev`; start that Worker in a separate `wrangler dev` process and wait until Wrangler reports the binding as `[connected]`. An unconnected binding cannot verify requests: `/v1/verify` returns 502 until Jimmy is available. Alternatively, remove the dev service binding and configure an HTTPS `JIMMY_URL` pointing to a reachable OpenAI-compatible Jimmy endpoint. Do not use a mock to assess accuracy.
+Local verification requires a running Jimmy verifier. The dev configuration binds `JIMMY_SERVICE` to `jimcf-dev`; start that Worker in a separate `wrangler dev` process and wait until Wrangler reports the binding as `[connected]`. An unconnected binding cannot verify requests: `/v1/verify` returns 502 until Jimmy is available. Alternatively, configure an HTTPS `JIMMY_URL` pointing to a reachable OpenAI-compatible Jimmy endpoint. Do not use a mock to assess accuracy.
 
 Set any required upstream credential with `npx wrangler secret put UPSTREAM_API_KEY --env <environment>`. Configure either a `JIMMY_SERVICE` binding or a HTTPS `JIMMY_URL` for every deployed environment.
 
@@ -258,7 +258,7 @@ The worker retries the verifier **once** on transient upstream failures (HTTP 5x
 | Feature | Description |
 |---------|------------|
 | **Three environments** | Explicit `dev`, `staging`, `production` targets in `wrangler.toml`. |
-| **Two provider paths** | `JIMMY_SERVICE` binding (preferred) or `JIMMY_URL` HTTPS fallback. |
+| **Two provider paths** | `JIMMY_URL` HTTPS override or `JIMMY_SERVICE` binding. |
 | **Secret-safe config** | Credentials only via `wrangler secret put`; never in the repo. |
 | **Request logging toggle** | Metadata-only logging, disable with `REQUEST_LOGGING_ENABLED=false`. |
 
@@ -309,13 +309,13 @@ lexverdict/
 
 | Variable | Required | Description |
 |---|---|---|
-| `JIMMY_SERVICE` | One of this or `JIMMY_URL` | Optional Cloudflare service binding for the verifier. It takes precedence over `JIMMY_URL`. |
+| `JIMMY_SERVICE` | One of this or `JIMMY_URL` | Optional Cloudflare service binding for the verifier. Used when `JIMMY_URL` is not set. |
 | `JIMMY_URL` | One of this or `JIMMY_SERVICE` | HTTPS OpenAI-compatible verifier endpoint. |
 | `UPSTREAM_URL` | Proxy mode | HTTPS OpenAI-compatible upstream base URL or completions endpoint. |
 | `UPSTREAM_API_KEY` | No | Optional upstream credential. Set it with `wrangler secret put`; client authorization is forwarded when absent. |
 | `REQUEST_LOGGING_ENABLED` | No | Set to `false` to disable metadata-only request logging. |
 
-The sample service names in `wrangler.toml` must match your verifier Workers. If you use `JIMMY_URL` instead, remove the corresponding `JIMMY_SERVICE` binding so the fallback can be selected.
+The sample service names in `wrangler.toml` must match your verifier Workers. An explicit `JIMMY_URL` takes precedence over the service binding.
 
 ---
 

@@ -491,13 +491,12 @@ async function fetchJimmy(
   };
 
   const attempt = async (): Promise<Response> => {
-    if (env.JIMMY_SERVICE) {
-      return env.JIMMY_SERVICE.fetch("https://jimcf/v1/chat/completions", init);
-    }
-
     const jimmyUrl = env.JIMMY_URL?.trim();
     if (!jimmyUrl) {
-      throw new VerifierConfigurationError("JIMMY_URL is not configured");
+      if (env.JIMMY_SERVICE) {
+        return env.JIMMY_SERVICE.fetch("https://jimcf/v1/chat/completions", init);
+      }
+      throw new VerifierConfigurationError("Jimmy verifier is not configured");
     }
 
     let url: URL;
