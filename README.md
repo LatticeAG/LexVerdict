@@ -81,6 +81,8 @@ npm run deploy:staging
 npm run deploy:production
 ```
 
+Local verification requires a running Jimmy verifier. The dev configuration binds `JIMMY_SERVICE` to `jimcf-dev`; start that Worker in a separate `wrangler dev` process and wait until Wrangler reports the binding as `[connected]`. An unconnected binding cannot verify requests: `/v1/verify` returns 502 until Jimmy is available. Alternatively, remove the dev service binding and configure an HTTPS `JIMMY_URL` pointing to a reachable OpenAI-compatible Jimmy endpoint. Do not use a mock to assess accuracy.
+
 Set any required upstream credential with `npx wrangler secret put UPSTREAM_API_KEY --env <environment>`. Configure either a `JIMMY_SERVICE` binding or a HTTPS `JIMMY_URL` for every deployed environment.
 
 Verify it works:
