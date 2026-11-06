@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """LexVerdict verification test suite - 40 complex cases in one pass."""
 import json
+import os
 import requests
 import time
 import sys
 
-URL = "https://your-lexverdict.workers.dev/v1/verify"
+URL = os.environ.get("LEXVERDICT_URL", "http://127.0.0.1:8787/v1/verify")
 
 tests = [
     # === PASS CASES (10) ===
@@ -200,7 +201,10 @@ for i, test in enumerate(tests, 1):
     t0 = time.time()
     try:
         resp = requests.post(URL, json=test, timeout=30)
+        resp.raise_for_status()
         data = resp.json()
+        if data.get("verdict") not in ("pass", "steer", "block"):
+            raise ValueError("response has no valid verdict")
         elapsed = time.time() - t0
         data["_latency"] = round(elapsed * 1000)
         data["_http"] = resp.status_code
@@ -234,7 +238,7 @@ if latencies:
     print(f"Min latency: {min(latencies)}ms | Max: {max(latencies)}ms | Avg: {sum(latencies)/len(latencies):.0f}ms")
 
 # Show failures
-failures = [i for i, r in enumerate(results) if r.get("verdict") != ("pass" if i < 10 else "steer")]
+failures = [i for i, r in enumerate(results, 1) if r.get("verdict") != ("pass" if i <= 10 else "steer")]
 if failures:
     print(f"\n\033[91mFailures on tests: {', '.join(str(f) for f in failures)}\033[0m")
     for f in failures:
@@ -243,3 +247,7 @@ if failures:
         print(f"       Expected: {'pass' if f <= 10 else 'steer'}, Got: {results[idx].get('verdict', 'error')}")
         if results[idx].get("message"):
             print(f"       Message: {results[idx]['message'][:120]}")
+
+if not any(r.get("verdict") in ("pass", "steer", "block") for r in results):
+    print("No valid verdicts received; check LEXVERDICT_URL.", file=sys.stderr)
+    sys.exit(1)

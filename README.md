@@ -210,6 +210,8 @@ Raw single-pass accuracy averages ~69%; the client-side retry loop in "Reliabili
 
 ### Test Suite
 
+The live Python suites default to `http://127.0.0.1:8787/v1/verify`. Set `LEXVERDICT_URL` to the full verify endpoint to target another server, for example `LEXVERDICT_URL=http://127.0.0.1:8787/v1/verify python3 test_verify.py` or `LEXVERDICT_URL=https://example.com/v1/verify python3 test/accuracy_test.py`. Both require Python `requests` and exit nonzero if no valid verdicts are received.
+
 Unit suite (mocked verifier, no network):
 
 ```bash
