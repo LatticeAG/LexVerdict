@@ -18,7 +18,7 @@ service = "jimcf"
 
 # These bindings assume the verifier Worker is deployed as jimcf, jimcf-dev,
 # and jimcf-staging. Replace them with your own Worker names, or remove the
-# binding and configure the JIMMY_URL fallback for that environment instead.
+# binding or configure a JIMMY_URL override for that environment instead.
 # Never store provider credentials in this file. UPSTREAM_API_KEY is optional
 # and must be configured as a secret for every deployment that needs it, e.g.:
 #   npx wrangler secret put UPSTREAM_API_KEY --env dev

@@ -231,7 +231,7 @@ describe("verifier calls", () => {
 
     await expect(
       verifyToolResult(
-        { ...env, JIMMY_SERVICE: { fetch: bindingFetch } as unknown as Fetcher },
+        { JIMMY_SERVICE: { fetch: bindingFetch } as unknown as Fetcher },
         toolRequest,
       ),
     ).resolves.toMatchObject({ verdict: "pass", confidence: 0.8 });
@@ -241,6 +241,15 @@ describe("verifier calls", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(networkFetch).not.toHaveBeenCalled();
+  });
+
+  it("uses an explicit URL over a service binding", async () => {
+    const bindingFetch = vi.fn();
+    const networkFetch = vi.fn().mockResolvedValue(jimmyResponse("VERDICT: PASS\nCONFIDENCE: 0.8"));
+    vi.stubGlobal("fetch", networkFetch);
+    await verifyToolResult({ ...env, JIMMY_SERVICE: { fetch: bindingFetch } as unknown as Fetcher }, toolRequest);
+    expect(networkFetch).toHaveBeenCalledWith(env.JIMMY_URL, expect.anything());
+    expect(bindingFetch).not.toHaveBeenCalled();
   });
 
   it("builds a chat prompt before calling Jimmy", async () => {

@@ -89,6 +89,14 @@ describe("LexVerdict Worker router", () => {
     });
   });
 
+  it("reports an unreachable development verifier as degraded", async () => {
+    const bindingFetch = vi.fn().mockRejectedValue(new Error("disconnected"));
+    const response = await worker.fetch(new Request("https://lexverdict.example/health"), {
+      UPSTREAM_URL: "https://upstream.example", ENVIRONMENT: "development", JIMMY_SERVICE: { fetch: bindingFetch } as unknown as Fetcher,
+    });
+    await expect(response.json()).resolves.toMatchObject({ status: "degraded", checks: { verifier: "unreachable" } });
+  });
+
   it("rejects malformed verify payloads with CORS-enabled 400 responses", async () => {
     const invalidJsonResponse = await worker.fetch(
       new Request("https://lexverdict.example/v1/verify", {

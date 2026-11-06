@@ -81,6 +81,8 @@ npm run deploy:staging
 npm run deploy:production
 ```
 
+Local verification requires a running Jimmy verifier. The dev configuration binds `JIMMY_SERVICE` to `jimcf-dev`; start that Worker in a separate `wrangler dev` process and wait until Wrangler reports the binding as `[connected]`. An unconnected binding cannot verify requests: `/v1/verify` returns 502 until Jimmy is available. Alternatively, configure an HTTPS `JIMMY_URL` pointing to a reachable OpenAI-compatible Jimmy endpoint. Do not use a mock to assess accuracy.
+
 Set any required upstream credential with `npx wrangler secret put UPSTREAM_API_KEY --env <environment>`. Configure either a `JIMMY_SERVICE` binding or a HTTPS `JIMMY_URL` for every deployed environment.
 
 Verify it works:
@@ -96,7 +98,7 @@ curl -X POST https://your-lexverdict.workers.dev/v1/verify \
 # -> { "verdict": "pass", "confidence": ..., "message": ... }
 
 curl https://your-lexverdict.workers.dev/health
-# -> { "status": "ok" | "degraded", ... } (degraded when no verifier provider is configured)
+# -> { "status": "ok" | "degraded", ... } (degraded when unconfigured or unreachable in development)
 ```
 
 ---
@@ -164,7 +166,7 @@ Content-Type: application/json
 
 ### Health
 
-`GET /health` returns Worker liveness and verifier configuration without calling a provider. Its `status` is `ok` when a Jimmy service binding or fallback URL is configured, and `degraded` otherwise.
+`GET /health` reports verifier configuration in deployed environments without contacting the provider. In development it makes a bounded GET connectivity probe: responses below 500 indicate `reachable`, while errors, timeouts and 5xx indicate `unreachable` and a degraded status. Reachability does not guarantee successful verification.
 
 ---
 
@@ -208,6 +210,8 @@ Raw single-pass accuracy averages ~69%; the client-side retry loop in "Reliabili
 
 ### Test Suite
 
+The live Python suites default to `http://127.0.0.1:8787/v1/verify`. Set `LEXVERDICT_URL` to the full verify endpoint to target another server, for example `LEXVERDICT_URL=http://127.0.0.1:8787/v1/verify python3 test_verify.py` or `LEXVERDICT_URL=https://example.com/v1/verify python3 test/accuracy_test.py`. Both require Python `requests` and exit nonzero if no valid verdicts are received.
+
 Unit suite (mocked verifier, no network):
 
 ```bash
@@ -249,14 +253,14 @@ The worker retries the verifier **once** on transient upstream failures (HTTP 5x
 | **Proxy mode** | `POST /v1/chat/completions` verifies upstream responses inline, streaming and non-streaming. |
 | **Six-check prompt** | Match, environment, data, security, failure, drift - every verdict runs the same systematic checks. |
 | **Retry-then-fail-closed** | One retry on transient 5xx/fetch errors; 502 afterwards. Never a silent pass. |
-| **Config-status health** | `GET /health` reports `ok`/`degraded` without touching a provider. |
+| **Config-status health** | `GET /health` reports configuration and probes connectivity in development. |
 
 ### Operations
 
 | Feature | Description |
 |---------|------------|
 | **Three environments** | Explicit `dev`, `staging`, `production` targets in `wrangler.toml`. |
-| **Two provider paths** | `JIMMY_SERVICE` binding (preferred) or `JIMMY_URL` HTTPS fallback. |
+| **Two provider paths** | `JIMMY_URL` HTTPS override or `JIMMY_SERVICE` binding. |
 | **Secret-safe config** | Credentials only via `wrangler secret put`; never in the repo. |
 | **Request logging toggle** | Metadata-only logging, disable with `REQUEST_LOGGING_ENABLED=false`. |
 
@@ -307,13 +311,13 @@ lexverdict/
 
 | Variable | Required | Description |
 |---|---|---|
-| `JIMMY_SERVICE` | One of this or `JIMMY_URL` | Optional Cloudflare service binding for the verifier. It takes precedence over `JIMMY_URL`. |
+| `JIMMY_SERVICE` | One of this or `JIMMY_URL` | Optional Cloudflare service binding for the verifier. Used when `JIMMY_URL` is not set. |
 | `JIMMY_URL` | One of this or `JIMMY_SERVICE` | HTTPS OpenAI-compatible verifier endpoint. |
 | `UPSTREAM_URL` | Proxy mode | HTTPS OpenAI-compatible upstream base URL or completions endpoint. |
 | `UPSTREAM_API_KEY` | No | Optional upstream credential. Set it with `wrangler secret put`; client authorization is forwarded when absent. |
 | `REQUEST_LOGGING_ENABLED` | No | Set to `false` to disable metadata-only request logging. |
 
-The sample service names in `wrangler.toml` must match your verifier Workers. If you use `JIMMY_URL` instead, remove the corresponding `JIMMY_SERVICE` binding so the fallback can be selected.
+The sample service names in `wrangler.toml` must match your verifier Workers. An explicit `JIMMY_URL` takes precedence over the service binding.
 
 ---
 
