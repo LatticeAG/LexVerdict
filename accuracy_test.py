@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Comprehensive LexVerdict accuracy test - 60 cases, 3 runs."""
-import requests, time, json, re
+import os, sys, requests, time, json, re
 from statistics import mean, stdev
 
-URL = "https://your-lexverdict.workers.dev/v1/verify"
+URL = os.environ.get("LEXVERDICT_URL", "http://127.0.0.1:8787/v1/verify")
 
 TESTS = [
     # === PASS (20) ===
@@ -78,23 +78,32 @@ TESTS = [
 NUM_RUNS = 3
 
 all_results = []
+results_by_case = []
+valid_responses = 0
 for run in range(NUM_RUNS):
     print(f"\n{'='*70}")
     print(f"RUN {run + 1}/{NUM_RUNS}")
     print(f"{'='*70}")
     correct = 0
+    results_by_case = []
     for i, t in enumerate(TESTS):
         t0 = time.time()
         try:
             resp = requests.post(URL, json={"tool_call": t["tc"], "goal": t["g"], "result": t["r"]}, timeout=30)
+            resp.raise_for_status()
             data = resp.json()
             elapsed = time.time() - t0
             verdict = data.get("verdict", "error")
+            if verdict not in ("pass", "steer", "block"):
+                raise ValueError("response has no valid verdict")
+            valid_responses += 1
             ok = verdict == t["e"]
+            results_by_case.append({"test": t, "verdict": verdict, "ok": ok})
             if ok: correct += 1
             mark = "✓" if ok else "✗"
             print(f"  {mark} #{i+1:3d} | {verdict:6s} | exp={t['e']:5s} | c={data.get('confidence','?'):4s} | {elapsed*1000:4.0f}ms | {t['n'][:40]}")
-        except Exception as e:
+        except (requests.RequestException, ValueError, TypeError) as e:
+            results_by_case.append({"test": t, "verdict": "error", "ok": False})
             print(f"  ✗ #{i+1:3d} | ERROR: {e}")
     pct = correct / len(TESTS) * 100
     print(f"\n  >>> Run {run+1}: {correct}/{len(TESTS)} = {pct:.1f}%")
@@ -115,11 +124,9 @@ if NUM_RUNS > 1:
 print(f"\nAverage: {mean(all_results):.0f}/{len(TESTS)} ({mean(run_pcts):.1f}%)")
 print(f"Total test cases per run: {len(TESTS)}")
 
-# Per-category across all runs
-if NUM_RUNS > 1:
-    print(f"\n{'─'*70}")
-    print(f"CATEGORY BREAKDOWN (averaged across {NUM_RUNS} runs)")
-    print(f"{'─'*70}")
+if valid_responses == 0:
+    print("No valid verdicts received; check LEXVERDICT_URL.", file=sys.stderr)
+    sys.exit(1)
 
 cats = [
     ("PASS (valid results)", range(0, 20), "pass"),
@@ -130,25 +137,7 @@ cats = [
     ("DRIFT", range(48, 54), "steer"),
     ("EDGE CASES", range(54, 60), "steer"),
 ]
-print(f"{'Category':<25s} {'Avg %':>8s} {'Avg N':>8s}")
-print(f"{'─'*41}")
-for cat_name, idx_range, _ in cats:
-    print(f"  {cat_name:<23s} ", end="")
-    # We don't have per-case data across runs, so report from run 1
-    # Actually let me just report the overall
-
-# Re-run with per-category tracking
-print(f"\n\n{'─'*70}")
-print(f"CATEGORY BREAKDOWN (last run's detailed data)")
-print(f"{'─'*70}")
-
-# Run it one more time with per-case tracking
-results_by_case = []
-for i, t in enumerate(TESTS):
-    resp = requests.post(URL, json={"tool_call": t["tc"], "goal": t["g"], "result": t["r"]}, timeout=30)
-    data = resp.json()
-    results_by_case.append({"test": t, "verdict": data.get("verdict", "error"), "ok": data.get("verdict", "error") == t["e"]})
-
+print("\nCATEGORY BREAKDOWN (last run)")
 for cat_name, idx_range, expected in cats:
     subset = [r for i, r in enumerate(results_by_case) if i in idx_range]
     cat_ok = sum(1 for r in subset if r["ok"])
