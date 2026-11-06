@@ -214,24 +214,38 @@ function isVerifierConfigured(env: Env): boolean {
     (typeof env.JIMMY_URL === "string" && env.JIMMY_URL.trim().length > 0);
 }
 
-/**
- * This is a configuration and process health check. It intentionally does not
- * make a provider request: health probes must not spend verifier capacity or
- * expose provider latency as Worker liveness.
- */
-function healthResponse(env: Env): Response {
-  const verifierConfigured = isVerifierConfigured(env);
+/** Development probes check connectivity; other environments report configuration only. */
+async function healthResponse(env: Env): Promise<Response> {
+  const configured = isVerifierConfigured(env);
+  let verifier = configured ? "configured" : "unconfigured";
+  if (configured && env.ENVIRONMENT?.trim() === "development") {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const url = env.JIMMY_URL?.trim();
+      const parsed = url ? new URL(url) : undefined;
+      if (parsed && parsed.protocol !== "https:") throw new Error("Invalid verifier URL");
+      const probe = parsed
+        ? fetch(parsed.toString(), { method: "GET", signal: controller.signal })
+        : env.JIMMY_SERVICE!.fetch("https://jimcf/v1/chat/completions", { method: "GET", signal: controller.signal });
+      const response = await Promise.race([
+        probe,
+        new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("Probe timed out")); }, 2000); }),
+      ]);
+      verifier = response.status < 500 ? "reachable" : "unreachable";
+      await response.body?.cancel();
+    } catch {
+      verifier = "unreachable";
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
   return jsonResponse(200, {
     service: SERVICE_NAME,
-    status: verifierConfigured ? "ok" : "degraded",
+    status: verifier === "unconfigured" || verifier === "unreachable" ? "degraded" : "ok",
     version: SERVICE_VERSION,
-    environment:
-      typeof env.ENVIRONMENT === "string" && env.ENVIRONMENT.trim()
-        ? env.ENVIRONMENT.trim()
-        : "unknown",
-    checks: {
-      verifier: verifierConfigured ? "configured" : "unconfigured",
-    },
+    environment: env.ENVIRONMENT?.trim() || "unknown",
+    checks: { verifier },
   });
 }
 
@@ -309,7 +323,7 @@ async function dispatchRequest(request: Request, env: Env): Promise<RoutedRespon
 
   if (path === "/health") {
     return {
-      response: request.method === "GET" ? healthResponse(env) : jsonError(405, "Method not allowed"),
+      response: request.method === "GET" ? await healthResponse(env) : jsonError(405, "Method not allowed"),
       route,
     };
   }

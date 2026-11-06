@@ -98,7 +98,7 @@ curl -X POST https://your-lexverdict.workers.dev/v1/verify \
 # -> { "verdict": "pass", "confidence": ..., "message": ... }
 
 curl https://your-lexverdict.workers.dev/health
-# -> { "status": "ok" | "degraded", ... } (degraded when no verifier provider is configured)
+# -> { "status": "ok" | "degraded", ... } (degraded when unconfigured or unreachable in development)
 ```
 
 ---
@@ -166,7 +166,7 @@ Content-Type: application/json
 
 ### Health
 
-`GET /health` returns Worker liveness and verifier configuration without calling a provider. Its `status` is `ok` when a Jimmy service binding or fallback URL is configured, and `degraded` otherwise.
+`GET /health` reports verifier configuration in deployed environments without contacting the provider. In development it makes a bounded GET connectivity probe: responses below 500 indicate `reachable`, while errors, timeouts and 5xx indicate `unreachable` and a degraded status. Reachability does not guarantee successful verification.
 
 ---
 
@@ -253,7 +253,7 @@ The worker retries the verifier **once** on transient upstream failures (HTTP 5x
 | **Proxy mode** | `POST /v1/chat/completions` verifies upstream responses inline, streaming and non-streaming. |
 | **Six-check prompt** | Match, environment, data, security, failure, drift - every verdict runs the same systematic checks. |
 | **Retry-then-fail-closed** | One retry on transient 5xx/fetch errors; 502 afterwards. Never a silent pass. |
-| **Config-status health** | `GET /health` reports `ok`/`degraded` without touching a provider. |
+| **Config-status health** | `GET /health` reports configuration and probes connectivity in development. |
 
 ### Operations
 
